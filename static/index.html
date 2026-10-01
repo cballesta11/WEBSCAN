@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WebScan · Analizador de seguridad web</title>
+<style>
+:root{--bg:#eef2f5;--panel:#fff;--ink:#14212b;--mute:#5b6b78;--line:#d5dde3;--accent:#0b5c8a;
+--ok:#1f8a4c;--bad:#c23b3b;--A:#1f8a4c;--B:#4c9a2a;--C:#b8a100;--D:#d9822b;--E:#cf5a2a;--F:#c23b3b}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1a22;--panel:#182632;--ink:#e6edf2;--mute:#94a6b4;--line:#2a3b48;--accent:#5cb3e6}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:920px;margin:0 auto;padding:32px 20px 64px}
+h1{font-size:1.9rem;margin:0 0 4px;letter-spacing:-.02em}
+.sub{color:var(--mute);margin:0 0 24px}
+form{display:flex;gap:8px;flex-wrap:wrap}
+input{flex:1;min-width:220px;padding:12px 14px;font-size:1rem;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink)}
+button{padding:12px 20px;font-size:1rem;border:0;border-radius:6px;background:var(--accent);color:#fff;cursor:pointer;font-weight:600}
+button:disabled{opacity:.6;cursor:wait}
+button.ghost{background:none;color:var(--bad);padding:4px 8px;font-weight:500}
+:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+#msg{margin:12px 0;color:var(--bad);min-height:1.4em}
+.report{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:24px;margin-top:8px}
+.head{display:flex;gap:24px;align-items:center;flex-wrap:wrap}
+.grade{font-size:5.5rem;font-weight:800;line-height:1;min-width:90px}
+.score{font-size:1.3rem;font-weight:700}
+.url{color:var(--mute);word-break:break-all}
+.cat{margin-top:22px}
+.cat h3{margin:0 0 6px;display:flex;justify-content:space-between;font-size:1.05rem}
+.bar{height:8px;background:var(--line);border-radius:4px;overflow:hidden;margin-bottom:10px}
+.bar i{display:block;height:100%;background:var(--accent)}
+ul{list-style:none;margin:0;padding:0}
+li{padding:8px 0;border-top:1px solid var(--line);display:grid;grid-template-columns:22px 1fr;gap:8px}
+li .t{font-weight:600}li .d{color:var(--mute);font-size:.92rem}li .r{font-size:.92rem}
+.ok{color:var(--ok)}.no{color:var(--bad)}
+h2{margin:40px 0 8px;font-size:1.2rem}
+.stats{color:var(--mute);margin-bottom:8px}
+.tablewrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line);border-radius:8px}
+th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}
+th{font-size:.85rem;color:var(--mute);font-weight:600}
+tr.row{cursor:pointer}tr.row:hover{background:var(--bg)}
+.pill{display:inline-block;min-width:26px;text-align:center;color:#fff;border-radius:4px;font-weight:700;padding:1px 6px}
+.empty{padding:20px;color:var(--mute)}
+</style>
+</head>
+<body>
+<main>
+  <h1>WebScan</h1>
+  <p class="sub">Escribe una dirección y comprueba HTTPS, cabeceras de seguridad, cookies y TLS.</p>
+  <form id="f">
+    <input id="url" placeholder="ejemplo.com" autocomplete="off" required aria-label="Dirección web">
+    <button id="go">Analizar</button>
+  </form>
+  <div id="msg" role="alert"></div>
+  <div id="result"></div>
+  <h2>Historial</h2>
+  <div class="stats" id="stats"></div>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Nota</th><th>Dominio</th><th>Puntos</th><th>Fecha</th><th></th></tr></thead>
+    <tbody id="hist"></tbody>
+  </table></div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const NAMES = {https:'HTTPS', headers:'Cabeceras de seguridad', cookies:'Cookies', tls:'TLS'};
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.detail || 'Error ' + r.status);
+  return data;
+}
+
+function render(rep) {
+  const cats = Object.entries(rep.categories).map(([k, c]) => `
+    <div class="cat">
+      <h3><span>${NAMES[k]}</span><span>${c.score} / ${c.max}</span></h3>
+      <div class="bar"><i style="width:${c.score / c.max * 100}%"></i></div>
+      <ul>${c.findings.map(f => `
+        <li><span class="${f.ok ? 'ok' : 'no'}" aria-label="${f.ok ? 'Correcto' : 'Fallo'}">${f.ok ? '✔' : '✘'}</span>
+        <div><div class="t">${esc(f.title)}</div><div class="d">${esc(f.detail)}</div>
+        ${f.recommendation ? `<div class="r">${esc(f.recommendation)}</div>` : ''}</div></li>`).join('')}
+      </ul>
+    </div>`).join('');
+  $('result').innerHTML = `<div class="report">
+    <div class="head">
+      <div class="grade" style="color:var(--${rep.grade})">${rep.grade}</div>
+      <div><div class="score">${rep.score} / 100</div><div class="url">${esc(rep.final_url)}</div></div>
+    </div>${cats}</div>`;
+}
+
+async function loadHistory() {
+  const [rows, st] = await Promise.all([api('/scans'), api('/stats')]);
+  $('stats').textContent = st.total ? `${st.total} análisis · nota media ${st.average_score}` : '';
+  $('hist').innerHTML = rows.length ? rows.map(r => `
+    <tr class="row" data-id="${r.id}">
+      <td><span class="pill" style="background:var(--${r.grade})">${r.grade}</span></td>
+      <td>${esc(r.domain)}</td><td>${r.score}</td>
+      <td>${esc(r.created_at.replace('T', ' ').slice(0, 16))}</td>
+      <td><button class="ghost" data-del="${r.id}">Borrar</button></td></tr>`).join('')
+    : '<tr><td colspan="5" class="empty">Todavía no hay análisis. Analiza tu primera web.</td></tr>';
+}
+
+$('f').addEventListener('submit', async e => {
+  e.preventDefault();
+  $('msg').textContent = ''; $('go').disabled = true; $('go').textContent = 'Analizando…';
+  try {
+    render(await api('/scans', {method:'POST', headers:{'Content-Type':'application/json'},
+                                body: JSON.stringify({url: $('url').value})}));
+    loadHistory();
+  } catch (err) { $('msg').textContent = err.message; }
+  $('go').disabled = false; $('go').textContent = 'Analizar';
+});
+
+$('hist').addEventListener('click', async e => {
+  try {
+    const del = e.target.dataset.del;
+    if (del) { await api('/scans/' + del, {method:'DELETE'}); $('result').innerHTML = ''; return loadHistory(); }
+    const row = e.target.closest('tr.row');
+    if (row) { render(await api('/scans/' + row.dataset.id)); window.scrollTo({top:0, behavior:'smooth'}); }
+  } catch (err) { $('msg').textContent = err.message; }
+});
+
+loadHistory();
+</script>
+</body>
+</html>
